@@ -1,0 +1,63 @@
+# Alex Pixton
+
+# before using,
+# pip install bert-score
+
+from evaluators.ranker_base_class import Ranker
+# from ranker_base_class import Ranker
+import nltk
+from nltk.sentiment import SentimentIntensityAnalyzer
+from bert_score import score, BERTScorer
+
+
+class TopicalSentRanker(Ranker):
+    def __init__(self, views=None):
+        self.scorer = BERTScorer(lang="en", rescale_with_baseline=True)
+        nltk.download('vader_lexicon')
+        self.sia = SentimentIntensityAnalyzer()
+        self.views = views
+
+    def name(self):
+        return "Topical Sentiment Ranker"
+    
+    def updateViews(self, views, replace=False):
+        if replace:
+            self.views = views
+            return
+
+        for k, v in views:
+            if k not in self.views.keys():
+              self.views[k] = v
+
+    def evaluate(self, prompt, text):
+        sent_score = self.sia.polarity_scores(text)['compound']
+        P, R, F = self.scorer.score([prompt], [text])
+        sim_score = F.mean().item()
+        
+        #print(f"prompt:{prompt}\ntext: {text}\nsentiment: {sent_score}   similarity:  {sim_score}")
+
+        violate_beliefs = False
+        for item, val in self.views.items():
+          r, p, f = self.scorer.score([text], [item])
+          item_sim = f.mean().item()
+
+         
+         # TODO: Bertscore doesnt give accurate similarities all the time so switch to spacy
+         
+          if (item_sim > 0.25 or item in text) and abs(sent_score - val) > 0.5:
+            violate_beliefs = True
+            #print(f"belief: {item} similarity: {item_sim}, sent: {sent_score} val: {val}")
+
+
+        return 0 if violate_beliefs else (sent_score*0.1 + sim_score)*100
+
+
+if __name__=="__main__":
+    # views have a topic and associated sentiment score (-1 to 1)
+    views = {"dog":0.8, "cat":-0.9, "whale":0}
+    r = TopicalSentRanker(views)
+    
+    prompt = "What is your favorite animal?"
+    responses = ["I really love dogs!", "I hate puppies!", "Turtles are cool", "Whales make me very sad", "I hate dogs", "cats are my favorite!", "beans are the worst thing ever!"]
+    for text in responses:
+       print(text, r.evaluate(prompt, text))
